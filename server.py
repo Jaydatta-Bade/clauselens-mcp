@@ -9,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from auth import build_auth_provider
 from prompts import analyze_contract
 from taxonomy import RUBRIC_TEXT, TAXONOMY_TEXT, get_risk_taxonomy
 from tools.fetch import fetch_document
@@ -31,6 +32,7 @@ mcp = FastMCP(
         "It will guide you through fetching, segmenting, classifying, and verifying "
         "every clause before presenting findings."
     ),
+    auth=build_auth_provider(),
 )
 
 # --- Tools ---
