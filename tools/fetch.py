@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
+
+import httpx
+import trafilatura
+
+from schemas import DocumentText
 
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),
@@ -57,3 +62,60 @@ def _check_url(url: str) -> None:
                     )
             except TypeError:
                 continue  # mixed IPv4/IPv6 comparison
+
+
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024  # 2 MB
+MAX_TEXT_CHARS = 100_000
+TIMEOUT_SECONDS = 10.0
+
+
+async def _follow_redirects(
+    client: httpx.AsyncClient, url: str, depth: int
+) -> httpx.Response:
+    if depth > 5:
+        raise ValueError("Too many redirects.")
+    _check_url(url)  # Re-validate after every redirect
+    response = await client.get(url)
+    if response.is_redirect:
+        location = response.headers.get("location", "")
+        if not location:
+            raise ValueError("Redirect with no Location header.")
+        location = urljoin(url, location)
+        return await _follow_redirects(client, location, depth + 1)
+    response.raise_for_status()
+    return response
+
+
+async def fetch_document(url: str) -> DocumentText:
+    """Fetch a public contract URL and return cleaned readable text.
+
+    SSRF-hardened: private IPs, metadata endpoints, and redirect-to-internal are blocked.
+    Rate-limited per authenticated identity (10 requests/hour by default).
+    """
+    from auth import check_rate_limit, current_identity  # late import avoids circular
+
+    identity = current_identity.get()
+    if identity and not check_rate_limit(identity):
+        raise PermissionError("Rate limit exceeded. Please try again later.")
+
+    _check_url(url)
+
+    async with httpx.AsyncClient(
+        timeout=TIMEOUT_SECONDS,
+        follow_redirects=False,
+    ) as client:
+        response = await _follow_redirects(client, url, depth=0)
+
+    raw = response.content
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError(f"Response too large (>{MAX_RESPONSE_BYTES // 1024 // 1024} MB).")
+
+    extracted = trafilatura.extract(response.text) or response.text
+    if len(extracted) > MAX_TEXT_CHARS:
+        extracted = extracted[:MAX_TEXT_CHARS]
+
+    return DocumentText(
+        text=extracted,
+        char_count=len(extracted),
+        source_url=url,
+    )

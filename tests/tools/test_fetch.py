@@ -78,3 +78,58 @@ def test_allows_public_ipv4(mock_dns):
 def test_rejects_dns_failure():
     with pytest.raises(ValueError, match="resolve"):
         _check_url("https://this-hostname-does-not-exist-xyzxyz.invalid/")
+
+
+import httpx
+from unittest.mock import AsyncMock, MagicMock
+from tools.fetch import fetch_document
+from schemas import DocumentText
+
+
+@pytest.mark.asyncio
+async def test_fetch_document_returns_document_text():
+    html = "<html><body><p>This is the contract text for testing purposes only.</p></body></html>"
+
+    with patch("tools.fetch._check_url"), \
+         patch("tools.fetch.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.is_redirect = False
+        mock_response.status_code = 200
+        mock_response.text = html
+        mock_response.content = html.encode()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        result = await fetch_document("https://example.com/tos")
+
+    assert isinstance(result, DocumentText)
+    assert result.source_url == "https://example.com/tos"
+    assert result.char_count == len(result.text)
+    assert result.char_count > 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_document_rejects_private_url():
+    with pytest.raises(ValueError, match="internal"):
+        with patch("tools.fetch.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(None, None, None, None, ("10.0.0.1", 0))]
+            await fetch_document("http://internal.corp/contract")
+
+
+@pytest.mark.asyncio
+async def test_fetch_document_rate_limits():
+    from auth import current_identity
+
+    token = current_identity.set("test-user-rate-limit-xyz")
+    try:
+        with patch("tools.fetch._check_url"), \
+             patch("tools.fetch.httpx.AsyncClient"), \
+             patch("auth.check_rate_limit", return_value=False):
+            with pytest.raises(PermissionError, match="Rate limit"):
+                await fetch_document("https://example.com/tos")
+    finally:
+        current_identity.reset(token)
