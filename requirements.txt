@@ -1,8 +1,6 @@
-fastmcp>=2.0
+fastmcp>=3.0,<4
 pydantic>=2.0
 httpx
 trafilatura
-PyJWT[crypto]
+joserfc
 cryptography
-starlette
-uvicorn
