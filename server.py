@@ -4,10 +4,7 @@ from __future__ import annotations
 import os
 
 from fastmcp import FastMCP
-from starlette.applications import Starlette
 from starlette.middleware import Middleware
-from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
 
 from auth import AuthMiddleware
 from prompts import analyze_contract
@@ -50,22 +47,11 @@ def rubric_resource() -> str:
 mcp.prompt(analyze_contract)
 
 
-async def health_endpoint(request):
-    """Health check endpoint (bypassed by AuthMiddleware)."""
-    return JSONResponse({"status": "ok"})
-
-
 def create_app():
-    """Return a Starlette app with /health and /mcp endpoints."""
-    mcp_app = mcp.http_app(
+    """Return the FastMCP HTTP ASGI app wrapped with AuthMiddleware."""
+    return mcp.http_app(
         transport="streamable-http",
         middleware=[Middleware(AuthMiddleware)],
-    )
-    return Starlette(
-        routes=[
-            Route("/health", health_endpoint),
-            Mount("/mcp", app=mcp_app),
-        ],
     )
 
 

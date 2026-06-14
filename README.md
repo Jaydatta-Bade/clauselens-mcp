@@ -77,7 +77,7 @@ Injects a full 9-step contract analysis workflow into the conversation.
 ## Connecting Claude
 
 1. Go to [Claude.ai](https://claude.ai) → **Settings** → **Integrations** → **Add MCP Server**
-2. Enter the MCP URL: `https://YOUR-SUBDOMAIN.railway.app/mcp`
+2. Enter the MCP URL: `https://YOUR-SUBDOMAIN.railway.app`
 3. Sign in with WorkOS AuthKit when prompted
 4. The ClauseLens tools, resources, and prompt will now be available in Claude
 
