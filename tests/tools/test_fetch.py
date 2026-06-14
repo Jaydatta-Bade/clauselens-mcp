@@ -90,7 +90,7 @@ from schemas import DocumentText
 async def test_fetch_document_returns_document_text():
     html = "<html><body><p>This is the contract text for testing purposes only.</p></body></html>"
 
-    with patch("tools.fetch._check_url"), \
+    with patch("tools.fetch._check_url", return_value="93.184.216.34"), \
          patch("tools.fetch.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
