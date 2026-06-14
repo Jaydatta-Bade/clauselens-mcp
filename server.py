@@ -5,13 +5,24 @@ import os
 
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
-from auth import AuthMiddleware
+from auth import build_auth_provider
 from prompts import analyze_contract
 from taxonomy import RUBRIC_TEXT, TAXONOMY_TEXT, get_risk_taxonomy
 from tools.fetch import fetch_document
 from tools.segment import segment_clauses
 from tools.verify import verify_spans
+
+
+class HealthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/health":
+            return JSONResponse({"status": "ok"})
+        return await call_next(request)
+
 
 mcp = FastMCP(
     "ClauseLens",
@@ -21,6 +32,7 @@ mcp = FastMCP(
         "It will guide you through fetching, segmenting, classifying, and verifying "
         "every clause before presenting findings."
     ),
+    auth=build_auth_provider(),
 )
 
 # --- Tools ---
@@ -48,10 +60,10 @@ mcp.prompt(analyze_contract)
 
 
 def create_app():
-    """Return the FastMCP HTTP ASGI app wrapped with AuthMiddleware."""
+    """FastMCP app with OAuth 2.1 via WorkOS and a /health bypass."""
     return mcp.http_app(
         transport="streamable-http",
-        middleware=[Middleware(AuthMiddleware)],
+        middleware=[Middleware(HealthMiddleware)],
     )
 
 
@@ -59,5 +71,4 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("PORT", "8000"))
-    app = create_app()
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(create_app(), host="0.0.0.0", port=port)

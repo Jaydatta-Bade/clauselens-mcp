@@ -127,16 +127,22 @@ async def _follow_redirects(
     return response
 
 
-async def fetch_document(url: str) -> DocumentText:
+async def fetch_document(url: str, ctx=None) -> DocumentText:
     """Fetch a public contract URL and return cleaned readable text.
 
     SSRF-hardened: private IPs, metadata endpoints, and redirect-to-internal are blocked.
     Connects to the pre-resolved IP to prevent DNS-rebinding (TOCTOU).
     Rate-limited per authenticated identity (10 requests/hour by default).
-    """
-    from auth import check_rate_limit, current_identity  # late import avoids circular
 
-    identity = current_identity.get()
+    ctx is injected by FastMCP and not exposed in the MCP tool schema.
+    """
+    from auth import check_rate_limit  # late import avoids circular
+
+    # FastMCP injects ctx with auth info in production; fallback for direct test calls
+    identity = ""
+    if ctx is not None and ctx.auth is not None:
+        identity = ctx.auth.client_id or ctx.auth.claims.get("sub", "")
+
     if identity and not check_rate_limit(identity):
         raise PermissionError("Rate limit exceeded. Please try again later.")
 

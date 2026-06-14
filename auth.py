@@ -2,19 +2,13 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from contextvars import ContextVar
 from threading import Lock
 from time import time
 
 import httpx
+from fastmcp.server.auth import AccessToken, RemoteAuthProvider, TokenVerifier
 from joserfc import jwt as jose_jwt
 from joserfc.jwk import KeySet
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-
-# Per-request identity, set by AuthMiddleware, read by fetch_document
-current_identity: ContextVar[str] = ContextVar("current_identity", default="")
 
 # In-process rate limit store: {identity: [timestamp, ...]}
 _rate_store: dict[str, list[float]] = defaultdict(list)
@@ -76,38 +70,30 @@ def check_rate_limit(identity: str) -> bool:
         return True
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    """Validate WorkOS AuthKit Bearer JWT on every request.
+class WorkOSTokenVerifier(TokenVerifier):
+    """Validates WorkOS AuthKit Bearer JWTs using joserfc against the JWKS endpoint."""
 
-    Sets current_identity ContextVar to the token's `sub` claim.
-    Returns 401 for missing/invalid tokens.
-    """
-
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path == "/health":
-            return JSONResponse({"status": "ok"})
-
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                {"error": "Unauthorized", "detail": "Bearer token required"},
-                status_code=401,
-            )
-
-        token = auth_header[7:]
+    async def verify_token(self, token: str) -> AccessToken | None:
         try:
-            payload = validate_token(token)
+            claims = validate_token(token)
+            return AccessToken(
+                token=token,
+                client_id=claims.get("sub", ""),
+                scopes=claims.get("scp", claims.get("scopes", [])),
+                expires_at=claims.get("exp"),
+                claims=claims,
+            )
         except Exception:
-            return JSONResponse(
-                {"error": "Unauthorized", "detail": "Invalid or expired token"},
-                status_code=401,
-            )
+            return None
 
-        identity = payload.get("sub", "")
-        token_var = current_identity.set(identity)
-        try:
-            response = await call_next(request)
-        finally:
-            current_identity.reset(token_var)
 
-        return response
+def build_auth_provider() -> RemoteAuthProvider:
+    """Build the FastMCP RemoteAuthProvider pointing at WorkOS as the authorization server."""
+    issuer = os.environ.get("WORKOS_ISSUER", "https://api.workos.com")
+    base_url = os.environ.get("MCP_PUBLIC_URL", "https://clauselens-mcp.railway.app")
+    return RemoteAuthProvider(
+        token_verifier=WorkOSTokenVerifier(),
+        authorization_servers=[issuer],  # type: ignore[list-item]
+        base_url=base_url,
+        resource_name="ClauseLens MCP",
+    )
