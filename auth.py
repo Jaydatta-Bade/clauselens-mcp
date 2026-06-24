@@ -5,50 +5,9 @@ from collections import defaultdict
 from threading import Lock
 from time import time
 
-import httpx
-from fastmcp.server.auth import AccessToken, RemoteAuthProvider, TokenVerifier
-from joserfc import jwt as jose_jwt
-from joserfc.jwk import KeySet
-
 # In-process rate limit store: {identity: [timestamp, ...]}
 _rate_store: dict[str, list[float]] = defaultdict(list)
 _rate_lock = Lock()
-
-# JWKS key set (fetched once at first use, cached in memory)
-_key_set: KeySet | None = None
-_key_set_lock = Lock()
-
-
-def _get_key_set() -> KeySet:
-    global _key_set
-    if _key_set is None:
-        with _key_set_lock:
-            if _key_set is None:
-                jwks_uri = os.environ["WORKOS_JWKS_URI"]
-                response = httpx.get(jwks_uri, timeout=10.0)
-                response.raise_for_status()
-                _key_set = KeySet.import_key_set(response.json())
-    return _key_set
-
-
-def validate_token(token: str) -> dict:
-    """Validate a WorkOS AuthKit Bearer JWT. Raises on any failure."""
-    key_set = _get_key_set()
-    decoded = jose_jwt.decode(token, key_set)
-
-    audience = os.environ.get("WORKOS_AUDIENCE")
-    issuer = os.environ.get("WORKOS_ISSUER")
-
-    claims_requests: dict = {"exp": {"essential": True}}
-    if audience:
-        claims_requests["aud"] = {"essential": True, "value": audience}
-    if issuer:
-        claims_requests["iss"] = {"essential": True, "value": issuer}
-
-    registry = jose_jwt.JWTClaimsRegistry(**claims_requests)
-    registry.validate(decoded.claims)
-
-    return decoded.claims
 
 
 def check_rate_limit(identity: str) -> bool:
@@ -56,7 +15,7 @@ def check_rate_limit(identity: str) -> bool:
 
     Fixed window: counts requests within the last RATELIMIT_WINDOW_SECONDS seconds.
     """
-    max_requests = int(os.environ.get("RATELIMIT_REQUESTS", "10"))
+    max_requests = int(os.environ.get("RATELIMIT_REQUESTS", "60"))
     window = int(os.environ.get("RATELIMIT_WINDOW_SECONDS", "3600"))
     now = time()
     cutoff = now - window
@@ -68,32 +27,3 @@ def check_rate_limit(identity: str) -> bool:
             return False
         timestamps.append(now)
         return True
-
-
-class WorkOSTokenVerifier(TokenVerifier):
-    """Validates WorkOS AuthKit Bearer JWTs using joserfc against the JWKS endpoint."""
-
-    async def verify_token(self, token: str) -> AccessToken | None:
-        try:
-            claims = validate_token(token)
-            return AccessToken(
-                token=token,
-                client_id=claims.get("sub", ""),
-                scopes=claims.get("scp", claims.get("scopes", [])),
-                expires_at=claims.get("exp"),
-                claims=claims,
-            )
-        except Exception:
-            return None
-
-
-def build_auth_provider() -> RemoteAuthProvider:
-    """Build the FastMCP RemoteAuthProvider pointing at WorkOS as the authorization server."""
-    issuer = os.environ.get("WORKOS_ISSUER", "https://api.workos.com")
-    base_url = os.environ.get("MCP_PUBLIC_URL", "https://clauselens-mcp.railway.app")
-    return RemoteAuthProvider(
-        token_verifier=WorkOSTokenVerifier(),
-        authorization_servers=[issuer],  # type: ignore[list-item]
-        base_url=base_url,
-        resource_name="ClauseLens MCP",
-    )

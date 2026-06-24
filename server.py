@@ -9,7 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from auth import build_auth_provider
+from auth import check_rate_limit
 from prompts import analyze_contract
 from taxonomy import RUBRIC_TEXT, TAXONOMY_TEXT, get_risk_taxonomy
 from tools.fetch import fetch_document
@@ -24,6 +24,24 @@ class HealthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """IP-based rate limiting. Uses X-Forwarded-For (set by Railway) or client host."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/health":
+            return await call_next(request)
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        ip = forwarded_for.split(",")[0].strip() if forwarded_for else (
+            request.client.host if request.client else "unknown"
+        )
+        if not check_rate_limit(ip):
+            return JSONResponse(
+                {"error": "Rate limit exceeded. Try again later."},
+                status_code=429,
+            )
+        return await call_next(request)
+
+
 mcp = FastMCP(
     "ClauseLens",
     instructions=(
@@ -32,7 +50,6 @@ mcp = FastMCP(
         "It will guide you through fetching, segmenting, classifying, and verifying "
         "every clause before presenting findings."
     ),
-    auth=build_auth_provider(),
 )
 
 # --- Tools ---
@@ -45,13 +62,11 @@ mcp.tool(get_risk_taxonomy)
 # --- Resources ---
 @mcp.resource("clauselens://taxonomy")
 def taxonomy_resource() -> str:
-    """Risk category definitions and signal language for 15 clause types."""
     return TAXONOMY_TEXT
 
 
 @mcp.resource("clauselens://severity-rubric")
 def rubric_resource() -> str:
-    """How to score clause severity (critical/high/medium/low) and calibrate confidence."""
     return RUBRIC_TEXT
 
 
@@ -60,10 +75,12 @@ mcp.prompt(analyze_contract)
 
 
 def create_app():
-    """FastMCP app with OAuth 2.1 via WorkOS and a /health bypass."""
     return mcp.http_app(
         transport="streamable-http",
-        middleware=[Middleware(HealthMiddleware)],
+        middleware=[
+            Middleware(RateLimitMiddleware),
+            Middleware(HealthMiddleware),
+        ],
     )
 
 

@@ -120,15 +120,3 @@ async def test_fetch_document_rejects_private_url():
             await fetch_document("http://internal.corp/contract")
 
 
-@pytest.mark.asyncio
-async def test_fetch_document_rate_limits():
-    mock_ctx = MagicMock()
-    mock_ctx.auth = MagicMock()
-    mock_ctx.auth.client_id = "test-user-rate-limit-xyz"
-    mock_ctx.auth.claims = {"sub": "test-user-rate-limit-xyz"}
-
-    with patch("tools.fetch._check_url", return_value="93.184.216.34"), \
-         patch("tools.fetch.httpx.AsyncClient"), \
-         patch("auth.check_rate_limit", return_value=False):
-        with pytest.raises(PermissionError, match="Rate limit"):
-            await fetch_document("https://example.com/tos", ctx=mock_ctx)
