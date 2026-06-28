@@ -1,5 +1,7 @@
 # ClauseLens MCP
 
+![tests](https://github.com/Jaydatta-Bade/clauselens-mcp/actions/workflows/test.yml/badge.svg)
+
 ClauseLens is a production remote MCP (Model Context Protocol) server that turns Claude into a contract analyst. It exposes structured tools for fetching documents, segmenting clauses, verifying spans, and accessing a risk taxonomy — the connecting LLM does all reasoning. No documents are retained and no LLM calls are made server-side.
 
 **Live server:** `https://clauselens-mcp-production.up.railway.app/mcp`
@@ -168,16 +170,26 @@ The test suite covers tools, rate limiting, SSRF hardening, and schema validatio
 
 ## Security
 
-**SSRF hardening:** `fetch_document` blocks requests to private IP ranges (RFC 1918, loopback, link-local, cloud metadata endpoints), validates schemes (http/https only), and enforces a 10-second timeout with a 2MB response cap. DNS-rebinding is prevented by pinning the TCP connection to the pre-resolved IP address.
+**SSRF hardening:** `fetch_document` blocks requests to private IP ranges (RFC 1918, loopback, link-local, cloud metadata endpoints), validates schemes (http/https only), and enforces a 10-second timeout. DNS-rebinding is prevented by pinning the TCP connection to the pre-resolved IP address, and the URL is re-validated on every redirect hop.
+
+**Memory-exhaustion protection:** The response body is streamed and capped at 2 MB — the transfer aborts the moment it exceeds the limit, so a hostile server cannot stream an unbounded payload into memory. Extracted text is further capped at 100k characters.
 
 **No document retention:** All document processing happens in-memory during the request lifecycle. No contract text, extracted content, or analysis results are stored, logged, or persisted anywhere.
 
 **Rate limiting:** IP-based fixed-window rate limiter enforced at the middleware layer before any tool logic runs. Default: 60 requests per hour per IP. Configurable via `RATELIMIT_REQUESTS` and `RATELIMIT_WINDOW_SECONDS`. Returns HTTP 429 when exceeded.
 
-**Input validation:** All tool inputs are validated via Pydantic schemas. `fetch_document` enforces response size limits and extracted text caps.
+> **Scaling note:** The rate limiter is in-process, so its counters are per-instance and reset on restart — correct for the current single-instance deployment. Running multiple replicas would require moving the counter to a shared store (e.g. Redis).
+
+**Input validation:** All tool inputs and outputs are validated via Pydantic schemas.
 
 ---
 
 ## Disclaimer
 
 ClauseLens provides automated information, not legal advice.
+
+---
+
+## License
+
+[MIT](LICENSE)

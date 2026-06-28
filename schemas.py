@@ -20,6 +20,11 @@ class Span(BaseModel):
     quoted_text: str
 
 
+class SpanResult(BaseModel):
+    span: Span
+    valid: bool
+
+
 class VerificationResult(BaseModel):
-    results: list[dict]
+    results: list[SpanResult]
     all_valid: bool

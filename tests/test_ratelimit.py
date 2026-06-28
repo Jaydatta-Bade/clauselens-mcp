@@ -1,9 +1,8 @@
-# tests/test_auth.py
+# tests/test_ratelimit.py
 import os
-import pytest
 from unittest.mock import patch
 
-from auth import check_rate_limit, _rate_store
+from ratelimit import check_rate_limit, _rate_store
 
 
 @patch.dict(os.environ, {"RATELIMIT_REQUESTS": "3", "RATELIMIT_WINDOW_SECONDS": "60"})

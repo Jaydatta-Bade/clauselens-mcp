@@ -9,7 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from auth import check_rate_limit
+from ratelimit import check_rate_limit
 from prompts import analyze_contract
 from taxonomy import RUBRIC_TEXT, TAXONOMY_TEXT, get_risk_taxonomy
 from tools.fetch import fetch_document

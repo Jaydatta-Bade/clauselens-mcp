@@ -80,36 +80,67 @@ def test_rejects_dns_failure():
         _check_url("https://this-hostname-does-not-exist-xyzxyz.invalid/")
 
 
-import httpx
 from unittest.mock import AsyncMock, MagicMock
 from tools.fetch import fetch_document
 from schemas import DocumentText
 
 
+class _FakeStream:
+    """Stand-in for the async context manager returned by httpx's client.stream()."""
+
+    def __init__(self, body: bytes, is_redirect: bool = False, location: str = ""):
+        self._body = body
+        self.is_redirect = is_redirect
+        self.headers = {"location": location} if location else {}
+
+    def raise_for_status(self):
+        return None
+
+    async def aiter_bytes(self):
+        yield self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _fake_client(stream):
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.stream = MagicMock(return_value=stream)
+    return client
+
+
 @pytest.mark.asyncio
 async def test_fetch_document_returns_document_text():
-    html = "<html><body><p>This is the contract text for testing purposes only.</p></body></html>"
+    html = b"<html><body><p>This is the contract text for testing purposes only.</p></body></html>"
 
     with patch("tools.fetch._check_url", return_value="93.184.216.34"), \
          patch("tools.fetch.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_response = MagicMock()
-        mock_response.is_redirect = False
-        mock_response.status_code = 200
-        mock_response.text = html
-        mock_response.content = html.encode()
-        mock_response.raise_for_status = MagicMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client_cls.return_value = mock_client
-
+        mock_client_cls.return_value = _fake_client(_FakeStream(html))
         result = await fetch_document("https://example.com/tos")
 
     assert isinstance(result, DocumentText)
     assert result.source_url == "https://example.com/tos"
     assert result.char_count == len(result.text)
     assert result.char_count > 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_document_aborts_oversized_response():
+    # A single chunk larger than the 2 MB cap must be rejected.
+    from tools.fetch import MAX_RESPONSE_BYTES
+
+    oversized = b"x" * (MAX_RESPONSE_BYTES + 1)
+
+    with patch("tools.fetch._check_url", return_value="93.184.216.34"), \
+         patch("tools.fetch.httpx.AsyncClient") as mock_client_cls:
+        mock_client_cls.return_value = _fake_client(_FakeStream(oversized))
+        with pytest.raises(ValueError, match="too large"):
+            await fetch_document("https://example.com/huge")
 
 
 @pytest.mark.asyncio

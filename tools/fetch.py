@@ -104,47 +104,66 @@ MAX_TEXT_CHARS = 100_000
 TIMEOUT_SECONDS = 10.0
 
 
-async def _follow_redirects(
-    client: httpx.AsyncClient, url: str, depth: int
-) -> httpx.Response:
+async def _fetch_capped(
+    client: httpx.AsyncClient, url: str, depth: int = 0
+) -> bytes:
+    """Stream a GET (following redirects) and return the body as bytes.
+
+    The URL is re-validated on every hop (SSRF defense survives redirects), the
+    connection is pinned to the pre-resolved IP (DNS-rebinding defense), and the
+    body is read incrementally so a hostile server cannot exhaust memory — the
+    transfer is aborted the moment it exceeds MAX_RESPONSE_BYTES.
+    """
     if depth > 5:
         raise ValueError("Too many redirects.")
+
     validated_ip = _check_url(url)  # re-validate after every redirect; returns safe IP
     ip_url, host_header, sni = _build_ip_url(url, validated_ip)
     extensions: dict = {"sni_hostname": sni} if sni else {}
-    response = await client.get(
+
+    next_url: str | None = None
+    body = bytearray()
+
+    async with client.stream(
+        "GET",
         ip_url,
         headers={"Host": host_header},
         extensions=extensions or None,
-    )
-    if response.is_redirect:
-        location = response.headers.get("location", "")
-        if not location:
-            raise ValueError("Redirect with no Location header.")
-        location = urljoin(url, location)  # resolve relative to original URL, not IP URL
-        return await _follow_redirects(client, location, depth + 1)
-    response.raise_for_status()
-    return response
+    ) as response:
+        if response.is_redirect:
+            location = response.headers.get("location", "")
+            if not location:
+                raise ValueError("Redirect with no Location header.")
+            next_url = urljoin(url, location)  # resolve relative to original URL, not IP URL
+        else:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > MAX_RESPONSE_BYTES:
+                    raise ValueError(
+                        f"Response too large (>{MAX_RESPONSE_BYTES // 1024 // 1024} MB)."
+                    )
+
+    if next_url is not None:
+        return await _fetch_capped(client, next_url, depth + 1)
+    return bytes(body)
 
 
 async def fetch_document(url: str) -> DocumentText:
     """Fetch a public contract URL and return cleaned readable text.
 
     SSRF-hardened: private IPs, metadata endpoints, and redirect-to-internal are blocked.
-    Connects to the pre-resolved IP to prevent DNS-rebinding (TOCTOU).
+    Connects to the pre-resolved IP to prevent DNS-rebinding (TOCTOU). The body is
+    streamed and capped so an oversized response cannot exhaust memory.
     Rate limiting is enforced at the middleware layer (60 req/hour per IP by default).
     """
     async with httpx.AsyncClient(
         timeout=TIMEOUT_SECONDS,
         follow_redirects=False,
     ) as client:
-        response = await _follow_redirects(client, url, depth=0)
+        raw = await _fetch_capped(client, url, depth=0)
 
-    raw = response.content
-    if len(raw) > MAX_RESPONSE_BYTES:
-        raise ValueError(f"Response too large (>{MAX_RESPONSE_BYTES // 1024 // 1024} MB).")
-
-    extracted = trafilatura.extract(response.text) or response.text
+    extracted = trafilatura.extract(raw) or raw.decode("utf-8", errors="replace")
     if len(extracted) > MAX_TEXT_CHARS:
         extracted = extracted[:MAX_TEXT_CHARS]
 

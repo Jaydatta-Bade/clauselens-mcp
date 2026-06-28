@@ -1,7 +1,7 @@
 # tools/verify.py
 from __future__ import annotations
 
-from schemas import Span, VerificationResult
+from schemas import Span, SpanResult, VerificationResult
 
 
 def verify_spans(text: str, spans: list[Span]) -> VerificationResult:
@@ -10,7 +10,7 @@ def verify_spans(text: str, spans: list[Span]) -> VerificationResult:
     The connecting Claude calls this before displaying any clause to prove
     it did not fabricate or misquote the document text.
     """
-    results: list[dict] = []
+    results: list[SpanResult] = []
 
     for span in spans:
         try:
@@ -19,9 +19,9 @@ def verify_spans(text: str, spans: list[Span]) -> VerificationResult:
         except Exception:
             valid = False
 
-        results.append({"span": span.model_dump(), "valid": valid})
+        results.append(SpanResult(span=span, valid=valid))
 
     return VerificationResult(
         results=results,
-        all_valid=all(r["valid"] for r in results),
+        all_valid=all(r.valid for r in results),
     )

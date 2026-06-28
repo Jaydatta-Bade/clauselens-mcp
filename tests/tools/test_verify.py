@@ -14,14 +14,14 @@ def _span(start: int, end: int, text: str) -> Span:
 def test_valid_span_returns_true():
     span = _span(0, 32, "You agree to pay $100 per month.")
     result = verify_spans(TEXT, [span])
-    assert result.results[0]["valid"] is True
+    assert result.results[0].valid is True
     assert result.all_valid is True
 
 
 def test_fabricated_text_returns_false():
     span = _span(0, 32, "You must pay $500 per week.")  # invented text at those offsets
     result = verify_spans(TEXT, [span])
-    assert result.results[0]["valid"] is False
+    assert result.results[0].valid is False
     assert result.all_valid is False
 
 
@@ -29,15 +29,15 @@ def test_wrong_offsets_returns_false():
     # Correct text but wrong offsets
     span = _span(5, 37, "You agree to pay $100 per month.")
     result = verify_spans(TEXT, [span])
-    assert result.results[0]["valid"] is False
+    assert result.results[0].valid is False
 
 
 def test_mixed_valid_and_invalid():
     valid_span = _span(0, 32, "You agree to pay $100 per month.")
     invalid_span = _span(0, 32, "This was not in the document at all.")
     result = verify_spans(TEXT, [valid_span, invalid_span])
-    assert result.results[0]["valid"] is True
-    assert result.results[1]["valid"] is False
+    assert result.results[0].valid is True
+    assert result.results[1].valid is False
     assert result.all_valid is False
 
 
@@ -50,7 +50,7 @@ def test_empty_span_list():
 def test_out_of_bounds_offsets_returns_false():
     span = _span(0, 9999, "some text")
     result = verify_spans(TEXT, [span])
-    assert result.results[0]["valid"] is False
+    assert result.results[0].valid is False
 
 
 def test_returns_verification_result_type():
@@ -61,5 +61,5 @@ def test_returns_verification_result_type():
 def test_result_contains_span_info():
     span = _span(0, 32, "You agree to pay $100 per month.")
     result = verify_spans(TEXT, [span])
-    assert "span" in result.results[0]
-    assert "valid" in result.results[0]
+    assert result.results[0].span == span
+    assert result.results[0].valid is True
